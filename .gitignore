@@ -1,0 +1,9 @@
+# Arduino / arduino-cli build output
+build/
+*.hex
+*.elf
+*.bin
+*.map
+
+# arduino-cli binary if downloaded into the repo
+/bin/
