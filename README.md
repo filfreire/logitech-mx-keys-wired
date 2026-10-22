@@ -2,7 +2,7 @@
 
 Make the Logitech MX Keys worked via wired connection.
 
-![picture of the logitech mx keys connected to teensy 4.1 with an FPC adapter](images/mxkeys_and_teensy2.png)
+![picture of the logitech mx keys connected to teensy 4.1 with an FPC adapter](images/mxkeys_and_teensy1.png)
 
 
 > This project is built on top of [Frank Adams' USB Laptop Keyboard Controller](https://github.com/thedalles77/USB_Laptop_Keyboard_Controller) and [Marcel Hillesheim's matrix generator](https://github.com/thedalles77/USB_Laptop_Keyboard_Controller-1/blob/master/matrixgenerator.py).
