@@ -1,6 +1,6 @@
 # logitech-mx-keys-wired
 
-Make the Logitech MX Keys worked via wired connection.
+Make the Logitech MX Keys work via wired connection.
 
 ![picture of the logitech mx keys connected to teensy 4.1 with an FPC adapter](images/mxkeys_and_teensy1.png)
 
