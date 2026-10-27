@@ -24,9 +24,7 @@ Make the Logitech MX Keys work via wired connection, 8000Hz USB pooling rate, su
 
 ![Bar chart of single-key latency: stock MX keyboards between 12.4 and 26.8 ms, MX Keys with this mod about 0.07 ms](images/latency_comparison.svg)
 
-The stock keyboard values are RTINGS measurements, made end to end: a key is pressed and timed until the computer registers it. The stock MX Keys is also slow to report releases: 43.1 ms, against 22.7 ms for presses, in RTINGS' multi-key test [*](https://www.rtings.com/keyboard/reviews/logitech/mx-keys).
-
-Side-note: The mod's values are firmware-side estimates from the measured scan timing (see [Firmware design and tuning](#firmware-design-and-tuning)): the time to read the key, plus the wait for the next 125 µs USB poll. Releases are reported just as fast as presses. These don't include the time the computer's USB controller and OS take to process the report, which RTINGS' numbers do, so the fair summary is **sub-millisecond, against 12–27 ms for the stock keyboards**.
+> Side-note: Stock values are RTINGS end-to-end measurements. My mod's values are firmware-side estimates ([details](#firmware-design-and-tuning)) that leave out the computer's own USB and OS processing, and releases are as fast as presses. So the fair summary is **sub-millisecond, against 12–27 ms**. The "buffering" feel some people report on the stock MX Keys fits RTINGS' data: it sends key updates only every ~8 ms (125 Hz effective) and takes 43.1 ms to report a release [*](https://www.rtings.com/keyboard/reviews/logitech/mx-keys), so fast typing reaches the computer in clumps, and the wireless link probably adds a delay when it wakes from idle. My mod never sleeps and sends each change the moment it's seen.
 
 ## Status
 
