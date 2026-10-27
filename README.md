@@ -1,6 +1,6 @@
 # logitech-mx-keys-wired
 
-Make the Logitech MX Keys work via wired connection.
+Make the Logitech MX Keys work via wired connection, 8000 MHz USB pooling rate, ~0.1 ms latency
 
 ![picture of the logitech mx keys connected to teensy 4.1 with an FPC adapter](images/mxkeys_and_teensy1.png)
 
@@ -17,6 +17,7 @@ Currently Working:
 - [x] Caps Lock LED works, both on the Teensy and on the Caps Lock key itself; 
 - [x] the top-row media and shortcut keys, Fn-lock, the Mac/Windows mode switch, work
 - [x] settings saved across reboots.
+- [x] 8000Hz USB pooling and ~72 µs keyboard scan rate
 
 Not done yet: 
 - [] working backlight (and the F5/F6 backlight decrease/increase keys)
@@ -115,12 +116,13 @@ Paste the pin arrays and matrices into `firmware/MX_Keys_Controller/MX_Keys_Cont
 then:
 
 ```bash
-arduino-cli compile --fqbn teensy:avr:teensy41:usb=keyboard,speed=24 firmware/MX_Keys_Controller
-arduino-cli upload  -p usb:<your-teensy-port> --fqbn teensy:avr:teensy41:usb=keyboard,speed=24 firmware/MX_Keys_Controller
+arduino-cli compile --fqbn teensy:avr:teensy41:usb=keyboard,speed=150 firmware/MX_Keys_Controller
+arduino-cli upload  -p usb:<your-teensy-port> --fqbn teensy:avr:teensy41:usb=keyboard,speed=150 firmware/MX_Keys_Controller
 ```
 
-`speed=24` runs the CPU at 24 MHz instead of the default 600 MHz. A matrix scan needs only
-a tiny fraction of that, and at 600 MHz the chip sits warm all day because `delay()` busy-waits.
+`speed=150` runs the CPU at 150 MHz instead of the default 600 MHz. The firmware scans
+continuously, so at 600 MHz the chip sits warm all day; at 24 MHz a scan is slower than the
+125us USB poll and wastes the 8000Hz polling. 150 MHz keeps a full scan well under one poll.
 
 If an upload fails with a Teensy Loader status error, retry once, or press the Teensy's
 button to force the bootloader and upload again.
@@ -155,15 +157,25 @@ You can find the code for the firmware on [firmware/MX_Keys_Controller/MX_Keys_C
 
 - Scan: drive each row (output pin) low in turn, read every column (input pin) with a pullup. Keys read low when pressed (negative logic).
 - The firmware only sends a USB report on a confirmed state change, never on a steady state.
-- Debounce is eager and per-key: a press or release is sent the instant it is first seen, then that key is locked out for `DEBOUNCE` scans so contact bounce is ignored. This gives about 1ms response and does not drop fast or glancing taps.
+- The matrix is scanned back to back with no delay. At 150 MHz a scan measures ~72us on average (about 13,900 scans/s), under 80us at worst while typing and under 100us while holding chords.
+- Debounce is eager and per-key: a press or release is sent the instant it is first seen, then that key is locked out for `DEBOUNCE_US` so contact bounce is ignored. Debounce adds no latency to the change itself and does not drop fast or glancing taps.
+- USB polling is 8000Hz: Teensy 4.1 runs at USB high speed (480 Mbit), and the Teensyduino keyboard endpoint asks for a poll every microframe (125us). Key-to-host latency is at most one scan plus one poll: ~0.2ms worst case, ~0.1ms on average. The media-key interface is polled at 1000Hz.
+- Anti-ghosting: the matrix has no diodes, so with three keys down at the corners of a rectangle the fourth corner reads pressed too (J+K+; also shows "."). The whole matrix is read before any change is acted on, and a press that closes such a rectangle is held back until the rectangle breaks. A press that might be a ghost (two of the other three corners down, the third maybe bouncing) waits 1ms first; ordinary typing and rolls are not delayed.
 - Rollover: 6KRO (the USB boot-protocol 6-key method) plus modifiers.
+- USB names: `usb_names.c` makes the board show up as "MX Keys" by "MX Keys Wired" instead of "Keyboard" by "Teensyduino". The vendor/product IDs stay the Teensy ones, so uploads still reboot the board by themselves.
 
-Two tuning knobs in the sketch:
+Tuning knobs in the sketch:
 
-- `#define DEBOUNCE 4` - lockout length in scans. Lower (2-3) for a tighter window, raise if
-  a worn switch chatters.
-- `delay(1)` at the end of `loop()` - the scan period in ms. Keep `DEBOUNCE * scan_period`
-  roughly in the 3-5ms range.
+- `#define DEBOUNCE_US 4000` - lockout length in microseconds. Lower (2000-3000) for a tighter
+  window, raise if a worn switch chatters.
+- `#define ROW_SETTLE_US 3` - how long a row is held low before its columns are read. Raise it
+  if keys are missed or read in the wrong row.
+- `#define GHOST_HOLD_US 2000` / `GHOST_CONFIRM_US 1000` - anti-ghosting windows. Raise them if
+  a phantom key still slips through when holding several keys.
+- `#define LATENCY_DEBUG 0` - set to 1 to measure the scan. Once a second the firmware prints
+  scans per second plus the average and worst scan time and time between scans. Read it with
+  `uv run tools/latency_monitor.py` (reads the Teensy serial emulation channel). Set it
+  back to 0 afterwards.
 
 ## Top row keys
 
