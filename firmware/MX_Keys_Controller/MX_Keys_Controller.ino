@@ -64,7 +64,8 @@
 #define GHOST_YES   2
 //
 // Set to 1 to measure scan timing and print it over the USB serial channel once a second
-// (read it with tools/latency_monitor.py, see README). Leave at 0 for normal use.
+// (read it with tools/latency_monitor.py, see README). Set to 2 to also skip the idle check and
+// always do full scans, to time them without typing. Leave at 0 for normal use.
 #define LATENCY_DEBUG 0
 //
 // OS mode (Fn+P = Windows, Fn+O = Mac). Mac mode remaps the modifiers to the MX Keys Mac
@@ -101,6 +102,12 @@ const int bl_duty[BL_LEVELS + 1] = {0, 42, 194, 473, 891, 1456, 2175, 3053, 4095
 // never sleeps). At 150 MHz the 20kHz PWM has ~7500 steps, so the 12-bit duty is kept.
 #if F_CPU != 150000000
 #warning "Not built at 150 MHz: add speed=150 to the FQBN (cooler than 600, faster than 24)"
+#endif
+//
+// The Teensy core polls the media-key interface every 8 microframes (1000Hz). Patching it to
+// every microframe (8000Hz, like the keyboard interface) needs tools/patch_teensy_core.py.
+#if defined(KEYMEDIA_INTERVAL) && (KEYMEDIA_INTERVAL != 1)
+#warning "Media keys poll at 1000Hz: run tools/patch_teensy_core.py, then compile with --clean"
 #endif
 //
 // Consumer page usages the Teensyduino key names don't cover (sent the same way as KEY_MEDIA_*)
@@ -215,31 +222,29 @@ const shortcut_def shortcuts[] = {
   {0, KEY_MENU, 0, KEY_MENU},                                      // menu (context) key
   {MODIFIERKEY_GUI, KEY_L, MODIFIERKEY_LEFT_CTRL | MODIFIERKEY_GUI, KEY_Q} // lock screen
 };
-// Initialize the old_key matrix with one's.
-// 1 = key not pressed, 0 = key is pressed
-boolean old_key[rows_max][cols_max] = {
-  {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
-  {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
-  {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
-  {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
-  {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
-  {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
-  {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
-  {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
-  {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1}
-};
-// Per-key lockout. Global, so zero-initialized at reset. After a key's state change is
-// accepted, locked is set and lock_start records micros(); the key is ignored until
-// DEBOUNCE_US has passed, which absorbs contact bounce without dropping the change itself.
-boolean locked[rows_max][cols_max];
+// Key state is kept as one 16-bit mask per row: bit y is the key in column y, 1 = pressed.
+// A scan then only does per-key work for the few keys that changed or are still inside a
+// timed window (lockout, ghost hold), instead of visiting all rows_max * cols_max cells.
+// All of these are global, so zero (nothing pressed) at reset.
+//
+// Committed state: what the host has been told.
+uint16_t old_down[rows_max];
+//
+// Per-key lockout. After a key's state change is accepted, its locked bit is set and
+// lock_start records micros(); the key is ignored until DEBOUNCE_US has passed, which absorbs
+// contact bounce without dropping the change itself.
+uint16_t locked[rows_max];
 uint32_t lock_start[rows_max][cols_max];
 uint32_t scan_now; // micros() at the start of the current scan
+const uint32_t settle_cycles = ROW_SETTLE_US * (F_CPU / 1000000); // ROW_SETTLE_US in CPU cycles
+boolean matrix_idle = false; // last scan found nothing down, sent or timing: probe all rows at once
 //
-// Raw state of every key from the current scan (LOW = pressed). The whole matrix is read
-// before any change is acted on, so a new press can be checked for ghosting (see ghost_check).
-byte raw_key[rows_max][cols_max];
-uint32_t last_low[rows_max][cols_max];      // scan_now when the key last read pressed
-boolean pending[rows_max][cols_max];        // press waiting out GHOST_CONFIRM_US
+// Raw state of every key from the current scan. The whole matrix is read before any change
+// is acted on, so a new press can be checked for ghosting (see ghost_check).
+uint16_t raw_down[rows_max];
+uint16_t ghost_mask[rows_max];         // read pressed now or within GHOST_HOLD_US
+uint32_t last_low[rows_max][cols_max]; // scan_now when the key last read pressed
+uint16_t pending[rows_max];            // press waiting out GHOST_CONFIRM_US
 uint32_t pending_start[rows_max][cols_max]; // scan_now when that wait started
 //
 // What each key sent when it was pressed (0 = nothing held). The release undoes exactly
@@ -249,10 +254,11 @@ boolean sent_sc[rows_max][cols_max]; // true while a key holds a shortcut's modi
 //
 #if LATENCY_DEBUG
 // Timing in CPU cycles (ARM_DWT_CYCCNT), reset after each report. scan = the matrix scan
-// only; loop = from one scan start to the next, the longest a key change can wait to be seen.
+// only (an all-rows probe when idle, else a full scan); full = the full scans among them;
+// loop = from one scan start to the next, the longest a key change can wait to be seen.
 uint32_t dbg_loop_start;    // cycle count at the start of the current loop
-uint32_t dbg_scan_max, dbg_loop_max, dbg_scans, dbg_loops;
-uint64_t dbg_scan_sum, dbg_loop_sum;
+uint32_t dbg_scan_max, dbg_loop_max, dbg_scans, dbg_loops, dbg_full, dbg_full_max;
+uint64_t dbg_scan_sum, dbg_loop_sum, dbg_full_sum;
 uint32_t dbg_report_at;     // millis() of the last report
 #endif
 //
@@ -263,6 +269,19 @@ int Row_IO[rows_max] = {15,8,14,9,10,11,12,24,25};
 //
 // Columns are the read (input) pins with pullups - FPC 1..16
 int Col_IO[cols_max] = {23,0,22,1,21,2,20,3,19,4,18,5,17,6,16,7};
+//
+// Direct GPIO access for the scan, filled in by setup() from the pin lists above. A row is
+// driven by writing its bit to the port's clear (low) or set (released) register, and all
+// columns are read with one load per GPIO port, instead of a pinMode/digitalRead per pin.
+volatile uint32_t *row_clr[rows_max]; // write row_mask here to drive the row low
+volatile uint32_t *row_set[rows_max]; // write row_mask here to release it (open drain = hi-z)
+uint32_t row_mask[rows_max];
+const byte ports_max = 4;               // the columns span GPIO6, GPIO7 and GPIO9
+volatile uint32_t *port_psr[ports_max]; // pad status register of each port the columns use
+byte port_count = 0;
+byte col_port[cols_max];                // which port_psr[] each column is on
+uint32_t col_mask[cols_max];            // and its bit in that port
+uint32_t port_cols[ports_max];          // all column bits on each port
 
 
 // Declare variables that will be used by functions
@@ -419,21 +438,36 @@ int os_mod(int m_key) {
   return m_key;
 }
 //
-// Function to send the modifier keys over usb
-void send_mod() {
+// Reports are batched: set_mod() and set_normals() only update the report, and scan_matrix()
+// sends it once per row. Every report sent waits for its own 125us USB poll, so sending one
+// per change would make the second of two keys changing in the same row arrive a poll late.
+// (Changes in two different rows of the same scan still go out as two reports: sending each
+// row at once is what gets a change out without waiting for the rest of the scan.)
+boolean report_dirty = false; // the report changed since it was last sent
+//
+// Function to load the modifier keys into the USB report
+void set_mod() {
   Keyboard.set_modifier(mod_shift_l | mod_shift_r | mod_ctrl_l | mod_ctrl_r | mod_alt_l | mod_alt_r | mod_gui | mod_gui_r | mod_shortcut);
-  Keyboard.send_now();
+  report_dirty = true;
 }
 //
-// Function to send the normal keys in the 6 slots over usb
-void send_normals() {
+// Function to load the normal keys in the 6 slots into the USB report
+void set_normals() {
   Keyboard.set_key1(slot1);
   Keyboard.set_key2(slot2);
   Keyboard.set_key3(slot3);
   Keyboard.set_key4(slot4);
   Keyboard.set_key5(slot5);
   Keyboard.set_key6(slot6);
-  Keyboard.send_now();
+  report_dirty = true;
+}
+//
+// Function to send the USB report if it changed
+void flush_report() {
+  if (report_dirty) {
+    Keyboard.send_now();
+    report_dirty = false;
+  }
 }
 //
 // Function to press a shortcut for the current OS mode: modifiers first, then the key, as
@@ -443,10 +477,11 @@ int press_shortcut(byte sc) {
   int m_key = (os_mode == OS_MAC) ? shortcuts[sc].mac_mod : shortcuts[sc].win_mod;
   int key = (os_mode == OS_MAC) ? shortcuts[sc].mac_key : shortcuts[sc].win_key;
   mod_shortcut = m_key;
-  send_mod();
+  set_mod();
   if (key) {
+    flush_report(); // the modifiers go out in their own report first
     load_slot(key);
-    send_normals();
+    set_normals();
   }
   return key;
 }
@@ -455,17 +490,11 @@ int press_shortcut(byte sc) {
 void release_shortcut(int key) {
   if (key) {
     clear_slot(key);
-    send_normals();
+    set_normals();
+    flush_report(); // the key release goes out in its own report first
   }
   mod_shortcut = 0;
-  send_mod();
-}
-//
-// Function to tell whether a key is down for the ghost check: read pressed in this scan, or
-// within GHOST_HOLD_US (a bouncing contact can read open at the moment its row is sampled).
-boolean ghost_down(int x, int y)
-{
-  return (raw_key[x][y] == LOW) || (scan_now - last_low[x][y] < GHOST_HOLD_US);
+  set_mod();
 }
 //
 // Function to check a new press for ghosting. The matrix has no diodes, so when three keys
@@ -475,18 +504,21 @@ boolean ghost_down(int x, int y)
 // back; it is retried every scan and goes through once the rectangle breaks.
 // Returns GHOST_YES for a full rectangle, GHOST_MAYBE when two of the other three corners
 // are down (the third may just be bouncing, or sampled open: rows are read ~30us apart),
-// GHOST_NO otherwise.
+// GHOST_NO otherwise. A key counts as down if it is in ghost_mask (read pressed in this scan,
+// or within GHOST_HOLD_US: a bouncing contact can read open at the moment its row is sampled).
+// Each other row r is checked against every other column at once, as bit masks.
 byte ghost_check(int x, int y)
 {
   byte result = GHOST_NO;
-  for (int c = 0; c < cols_max; c++) {
-    if (c == y) continue;
-    byte row_mate = ghost_down(x, c); // a key in this row
-    for (int r = 0; r < rows_max; r++) {
-      if (r == x) continue;
-      byte corners = row_mate + ghost_down(r, y) + ghost_down(r, c); // + this column + opposite
-      if (corners == 3) return GHOST_YES;
-      if (corners == 2) result = GHOST_MAYBE;
+  uint16_t others = ~(1 << y);                 // every column but this key's own
+  uint16_t row_mates = ghost_mask[x] & others; // keys down in this key's row
+  for (int r = 0; r < rows_max; r++) {
+    if (r == x) continue;
+    uint16_t opposite = ghost_mask[r] & others;               // row r, the other columns
+    uint16_t col_mate = (ghost_mask[r] >> y) & 1 ? others : 0; // row r, this key's column
+    if (row_mates & opposite & col_mate) return GHOST_YES;    // all three corners down
+    if ((row_mates & opposite) | (row_mates & col_mate) | (opposite & col_mate)) {
+      result = GHOST_MAYBE;                                    // two of the three down
     }
   }
   return result;
@@ -496,55 +528,68 @@ byte ghost_check(int x, int y)
 // of a full rectangle for GHOST_CONFIRM_US first; a clean press goes through at once.
 boolean press_ok(int x, int y)
 {
+  uint16_t bit = 1 << y;
   byte g = ghost_check(x, y);
   if (g == GHOST_YES) {
-    pending[x][y] = false;
+    pending[x] &= ~bit;
     return false;
   }
   if (g == GHOST_MAYBE) {
-    if (!pending[x][y]) {
-      pending[x][y] = true;
+    if (!(pending[x] & bit)) {
+      pending[x] |= bit;
       pending_start[x][y] = scan_now;
     }
     if (scan_now - pending_start[x][y] < GHOST_CONFIRM_US) return false;
   }
-  pending[x][y] = false;
+  pending[x] &= ~bit;
   return true;
 }
 //
-// Function to start a key's debounce lockout
-void lock_key(int x, int y)
+// Function to commit a key's new state and start its debounce lockout
+void commit_key(int x, int y, boolean pressed)
 {
-  locked[x][y] = true;
+  uint16_t bit = 1 << y;
+  if (pressed) {
+    old_down[x] |= bit;
+  }
+  else {
+    old_down[x] &= ~bit;
+  }
+  locked[x] |= bit;
   lock_start[x][y] = scan_now;
 }
 //
-// Function to set a pin to high impedance (acts like open drain output)
-void go_z(int pin)
+// Function to set a row pin as an open-drain output, released (hi-z) to start. The weak
+// pullup matches the old pinMode(INPUT) + digitalWrite(HIGH) idle state of a row. Driving
+// the row is then a single write to its port's clear or set register (see row_clr/row_set).
+void row_pin(int x)
 {
-  pinMode(pin, INPUT);
-  digitalWrite(pin, HIGH);
+  int pin = Row_IO[x];
+  row_clr[x] = portClearRegister(pin);
+  row_set[x] = portSetRegister(pin);
+  row_mask[x] = digitalPinToBitMask(pin);
+  *row_set[x] = row_mask[x]; // output latch high = released, before the pin becomes an output
+  pinMode(pin, OUTPUT_OPENDRAIN);
+  *portControlRegister(pin) = IOMUXC_PAD_DSE(7) | IOMUXC_PAD_ODE |
+                              IOMUXC_PAD_PKE | IOMUXC_PAD_PUE | IOMUXC_PAD_PUS(3) | IOMUXC_PAD_HYS;
 }
 //
-// Function to set a pin as an input with a pullup
-void go_pu(int pin)
+// Function to set a column pin as an input with a pullup, and find its port and bit for the scan
+void col_pin(int y)
 {
+  int pin = Col_IO[y];
   pinMode(pin, INPUT_PULLUP);
-  digitalWrite(pin, HIGH);
-}
-//
-// Function to send a pin to a logic low
-void go_0(int pin)
-{
-  pinMode(pin, OUTPUT);
-  digitalWrite(pin, LOW);
-}
-//
-// Function to send a pin to a logic high
-void go_1(int pin)
-{
-  pinMode(pin, OUTPUT);
-  digitalWrite(pin, HIGH);
+  volatile uint32_t *psr = portInputRegister(pin);
+  byte p = 0;
+  while ((p < port_count) && (port_psr[p] != psr)) {
+    p++;
+  }
+  if (p == port_count) {       // first column on this port
+    port_psr[port_count++] = psr;
+  }
+  col_port[y] = p;
+  col_mask[y] = digitalPinToBitMask(pin);
+  port_cols[p] |= col_mask[y];
 }
 //
 // Function to make an indicator LED pin a weak output. There are no series resistors on the
@@ -630,13 +675,240 @@ void setup() {
   ind_pin(IND_COMP3, HIGH);
   ind_pin(IND_CAPS, HIGH);
 //
+  pinMode(CAPS_LED, OUTPUT);
+//
   for (int a = 0; a < cols_max; a++) {  // loop thru all column pins
-    go_pu(Col_IO[a]); // set each column pin as an input with a pullup
+    col_pin(a); // set each column pin as an input with a pullup
   }
 //
   for (int b = 0; b < rows_max; b++) {  // loop thru all row pins
-    go_z(Row_IO[b]); // set each row pin as a floating output
+    row_pin(b); // set each row pin as a released open-drain output
   }
+}
+//
+// Function to sample the columns of the row(s) currently driven low: one read per port, so
+// all columns are sampled together. Turning that into a column mask (cols_down) is slower, so
+// it is kept separate and done after the next row has been driven.
+void read_ports(uint32_t *port_val)
+{
+  for (int p = 0; p < port_count; p++) {
+    port_val[p] = *port_psr[p]; // every column on this port, read at once
+  }
+}
+//
+// Function to turn a port sample into a mask with bit y set for each column that reads low
+// (key pressed, negative logic)
+uint16_t cols_down(const uint32_t *port_val)
+{
+  uint16_t down = 0;
+  for (int y = 0; y < cols_max; y++) {   // loop thru the columns
+    if (!(port_val[col_port[y]] & col_mask[y])) {
+      down |= 1 << y;
+    }
+  }
+  return down;
+}
+//
+// Function to wait until ROW_SETTLE_US has passed since a row was driven low (start = the
+// ARM_DWT_CYCCNT cycle count then). Work done since then counts toward the wait.
+void settle_wait(uint32_t start)
+{
+  while (ARM_DWT_CYCCNT - start < settle_cycles) {
+  }
+}
+//
+// Function to store a row's new reading and update its ghost-check state
+void decode_row(int x, uint16_t down)
+{
+  raw_down[x] = down;
+  pending[x] &= down; // a press waiting on the ghost check went away
+  for (uint16_t m = down; m; m &= m - 1) { // keys held: restart their ghost hold window
+    last_low[x][__builtin_ctz(m)] = scan_now;
+  }
+  for (uint16_t m = ghost_mask[x] & ~down; m; m &= m - 1) { // keys let go: end it once over
+    int y = __builtin_ctz(m);
+    if (scan_now - last_low[x][y] >= GHOST_HOLD_US) {
+      ghost_mask[x] &= ~(1 << y);
+    }
+  }
+  ghost_mask[x] |= down;
+}
+//
+// Function to act on each key's change in a row. Rows after x still hold the previous
+// scan's state for the ghost check, which is at most one scan old.
+void act_row(int x)
+{
+  // only keys that differ from what was sent, or are locked out, need a look
+  for (uint16_t work = (raw_down[x] ^ old_down[x]) | locked[x]; work; work &= work - 1) {
+    int y = __builtin_ctz(work);
+    uint16_t bit = 1 << y;
+    if ((locked[x] & bit) && (scan_now - lock_start[x][y] < DEBOUNCE_US)) {
+      // key is in its lockout window after a recent change; ignore it for now
+    }
+    else {
+      locked[x] &= ~bit; // not locked out, so any change here is real - act now
+      boolean pressed = (raw_down[x] & bit) != 0; // true = this change is a press, false = a release
+      // the key changed state; a possible ghost press is skipped (not committed) and retried
+      if ((pressed != ((old_down[x] & bit) != 0)) && (!pressed || press_ok(x, y))) {
+// **********Modifier keys including the Fn special case
+        if (modifier[x][y] != 0) {
+          if (pressed) {
+            if (modifier[x][y] != MODIFIERKEY_FN) { // Exclude Fn modifier key
+              sent[x][y] = os_mod(modifier[x][y]); // the modifier this OS mode sends
+              load_mod(sent[x][y]); // load the pressed modifier into its mod_... variable
+              set_mod();           // load all modifier states into the report
+            }
+            else {
+              Fn_pressed = LOW; // Fn status variable is active low
+            }
+          }
+          else { // released
+            if (modifier[x][y] != MODIFIERKEY_FN) {
+              clear_mod(sent[x][y]); // clear what the press sent, even if OS mode changed
+              sent[x][y] = 0;
+              set_mod();            // load all modifier states into the report
+            }
+            else {
+              Fn_pressed = HIGH; // Fn is no longer active
+            }
+          }
+          commit_key(x, y, pressed);    // commit the new state, start the lockout window
+        }
+// ***********Consumer keys, shortcut keys, normal keys and media keys
+        else if ((normal[x][y] != 0) || (media[x][y] != 0) || (consumer[x][y] != 0) ||
+                 (shortcut[x][y] != 0) || (backlight_key[x][y] != 0)) {
+          if (pressed) {
+            boolean accepted = true;
+            boolean use_media = (!Fn_pressed != fn_lock); // Fn held XOR Fn-lock
+            if (!Fn_pressed && (normal[x][y] == KEY_ESC)) {
+              fn_lock = !fn_lock; // Fn+Esc toggles Fn-lock; the Esc itself is not sent
+              save_settings();
+            }
+            else if (!Fn_pressed && (normal[x][y] == KEY_P)) {
+              set_os_mode(OS_WIN); // Fn+P = Windows; the P is not sent
+            }
+            else if (!Fn_pressed && (normal[x][y] == KEY_O)) {
+              set_os_mode(OS_MAC); // Fn+O = Mac; the O is not sent
+            }
+            else if ((backlight_key[x][y] != 0) && (use_media || (normal[x][y] == 0))) {
+              step_backlight(backlight_key[x][y]); // handled here, nothing sent to the host
+            }
+            else if ((consumer[x][y] != 0) && (use_media || (normal[x][y] == 0))) {
+              // consumer key: sent unless Fn/Fn-lock picks the F-key, or always if there
+              // is no F-key alternative.
+              // Uses the media-key interface, so it does not need one of the 6 slots.
+              Keyboard.press(consumer[x][y]);
+              sent[x][y] = consumer[x][y];
+            }
+            else if ((shortcut[x][y] != 0) && (use_media || (normal[x][y] == 0))) {
+              // shortcut key: same default/Fn rule as consumer keys, but it needs a free
+              // slot for its key, so it retries like a normal key when the slots are full
+              if (!slots_full) {
+                sent[x][y] = press_shortcut(shortcut[x][y]);
+                sent_sc[x][y] = true;
+              }
+              else {
+                accepted = false;
+              }
+            }
+            else if (!Fn_pressed && (media[x][y] != 0)) { // Fn pressed -> tap the media key
+              if (media_tap) {
+                Keyboard.release(media_tap); // end any tap still held
+              }
+              Keyboard.press(media[x][y]); // loop() sends the release after MEDIA_TAP_US
+              media_tap = media[x][y];
+              media_tap_start = micros();
+            }
+            else if ((normal[x][y] != 0) && !slots_full) { // normal key into a free slot
+              load_slot(normal[x][y]);
+              set_normals();
+              sent[x][y] = normal[x][y];
+            }
+            else {
+              // slots full: do not commit or lock out, so this press retries on the next
+              // scan once one of the 6 slots frees up
+              accepted = false;
+            }
+            if (accepted) {
+              commit_key(x, y, pressed); // commit the press, start the lockout window
+            }
+          }
+          else { // released - undo whatever the press sent
+            if (sent_sc[x][y]) { // a shortcut: its key (if any) and its modifiers
+              release_shortcut(sent[x][y]);
+              sent_sc[x][y] = false;
+            }
+            else if (sent[x][y] == consumer[x][y] && sent[x][y] != 0) {
+              Keyboard.release(sent[x][y]);
+            }
+            else if (sent[x][y] != 0) { // a normal key occupying a slot
+              clear_slot(sent[x][y]);
+              set_normals();
+            }
+            sent[x][y] = 0;
+            commit_key(x, y, pressed); // commit the release, start the lockout window
+          }
+        }
+        else {
+          commit_key(x, y, pressed); // no key mapped at this cell; just track the state
+        }
+      }
+    }
+  }
+}
+//
+// Function to scan the whole matrix. Each row is acted on as soon as it is read, and the
+// next row is driven low first so it settles while that work is done: a row is still held
+// low ROW_SETTLE_US before its columns are read, but the work no longer adds to the scan.
+void scan_matrix()
+{
+  *row_clr[0] = row_mask[0]; // Activate the first row (send it low)
+  uint32_t settle_start = ARM_DWT_CYCCNT;
+  for (int x = 0; x < rows_max; x++) {
+    settle_wait(settle_start);  // give the row time to go low and settle out
+    uint32_t port_val[ports_max];
+    read_ports(port_val);
+    *row_set[x] = row_mask[x];  // De-activate Row (release it to hi-z)
+    if (x + 1 < rows_max) {
+      *row_clr[x + 1] = row_mask[x + 1]; // Activate the next row; it settles while this one is handled
+      settle_start = ARM_DWT_CYCCNT;
+    }
+    decode_row(x, cols_down(port_val));
+    act_row(x);
+    flush_report(); // the row's changes go out at once, in one report
+  }
+//
+  uint16_t busy = 0; // anything down, sent, or still inside a timed window?
+  for (int x = 0; x < rows_max; x++) {
+    busy |= raw_down[x] | old_down[x] | locked[x] | ghost_mask[x];
+  }
+#if LATENCY_DEBUG == 2
+  busy = 1; // always do full scans, to time them
+#endif
+  matrix_idle = !busy;
+}
+//
+// Function to check every key at once: all rows are driven low together and the columns
+// read once. With no key held, any press pulls its column low, so one settle instead of
+// rows_max tells whether a full scan is needed. Returns true if a column read low.
+boolean any_key_down()
+{
+  for (int x = 0; x < rows_max; x++) {
+    *row_clr[x] = row_mask[x];
+  }
+  uint32_t settle_start = ARM_DWT_CYCCNT;
+  settle_wait(settle_start);
+  uint32_t port_val[ports_max];
+  read_ports(port_val);
+  for (int x = 0; x < rows_max; x++) {
+    *row_set[x] = row_mask[x];
+  }
+  for (int p = 0; p < port_count; p++) {
+    if ((port_val[p] & port_cols[p]) != port_cols[p]) {
+      return true; // a column on this port reads low
+    }
+  }
+  return false;
 }
 //
 extern volatile uint8_t keyboard_leds; // 8 bits sent from host to Teensy that give keyboard LED status. Caps lock is bit D1.
@@ -645,10 +917,9 @@ extern volatile uint8_t keyboard_leds; // 8 bits sent from host to Teensy that g
 //
 void loop() {
 // Scan keyboard matrix with an outer loop that drives each row low and an inner loop that reads every column (with pull ups).
-// The routine looks at each key's present state (by reading the column input pin) and also the previous state from the last scan
-// (a few tens of microseconds ago). The status of a key that was just pressed or just released is sent over USB and the state is saved in the old_key matrix.
-// The keyboard keys will read as logic low if they are pressed (negative logic).
-// The old_key matrix also uses negative logic (low=pressed).
+// The routine compares each row's present state (raw_down, built from the column input pins) with the state last sent (old_down).
+// The status of a key that was just pressed or just released is sent over USB and the state is saved in old_down.
+// The keyboard keys read as logic low if they are pressed (negative logic); the row masks store pressed as 1.
 //
 #if LATENCY_DEBUG
   uint32_t dbg_now = ARM_DWT_CYCCNT;
@@ -661,141 +932,17 @@ void loop() {
   dbg_loop_start = dbg_now;
 #endif
   scan_now = micros();
-  for (int x = 0; x < rows_max; x++) {   // read the whole matrix first
-    go_0(Row_IO[x]); // Activate Row (send it low)
-    delayMicroseconds(ROW_SETTLE_US); // give the row time to go low and settle out
-    for (int y = 0; y < cols_max; y++) {   // loop thru the columns
-      raw_key[x][y] = digitalRead(Col_IO[y]); // LOW (0) = pressed, HIGH (1) = released (negative logic)
-      if (raw_key[x][y] == LOW) {
-        last_low[x][y] = scan_now;
-      }
-      else {
-        pending[x][y] = false; // a press waiting on the ghost check went away
-      }
-    }
-    go_z(Row_IO[x]); // De-activate Row (send it to hi-z)
-  }
-//
-  for (int x = 0; x < rows_max; x++) {   // then act on each key's change
-    for (int y = 0; y < cols_max; y++) {
-      if (locked[x][y] && (scan_now - lock_start[x][y] < DEBOUNCE_US)) {
-        // key is in its lockout window after a recent change; ignore it for now
-      }
-      else {
-        locked[x][y] = false; // not locked out, so any change here is real - act now
-        int reading = raw_key[x][y];
-        // the key changed state; a possible ghost press is skipped (not committed) and retried
-        if ((reading != old_key[x][y]) && ((reading != LOW) || press_ok(x, y))) {
-          boolean pressed = (reading == LOW); // true = this change is a press, false = a release
-// **********Modifier keys including the Fn special case
-          if (modifier[x][y] != 0) {
-            if (pressed) {
-              if (modifier[x][y] != MODIFIERKEY_FN) { // Exclude Fn modifier key
-                sent[x][y] = os_mod(modifier[x][y]); // the modifier this OS mode sends
-                load_mod(sent[x][y]); // load the pressed modifier into its mod_... variable
-                send_mod();           // send all modifier states over USB
-              }
-              else {
-                Fn_pressed = LOW; // Fn status variable is active low
-              }
-            }
-            else { // released
-              if (modifier[x][y] != MODIFIERKEY_FN) {
-                clear_mod(sent[x][y]); // clear what the press sent, even if OS mode changed
-                sent[x][y] = 0;
-                send_mod();            // send all modifier states over USB
-              }
-              else {
-                Fn_pressed = HIGH; // Fn is no longer active
-              }
-            }
-            old_key[x][y] = reading;      // commit the new state
-            lock_key(x, y);               // start the lockout window
-          }
-// ***********Consumer keys, shortcut keys, normal keys and media keys
-          else if ((normal[x][y] != 0) || (media[x][y] != 0) || (consumer[x][y] != 0) ||
-                   (shortcut[x][y] != 0) || (backlight_key[x][y] != 0)) {
-            if (pressed) {
-              boolean accepted = true;
-              boolean use_media = (!Fn_pressed != fn_lock); // Fn held XOR Fn-lock
-              if (!Fn_pressed && (normal[x][y] == KEY_ESC)) {
-                fn_lock = !fn_lock; // Fn+Esc toggles Fn-lock; the Esc itself is not sent
-                save_settings();
-              }
-              else if (!Fn_pressed && (normal[x][y] == KEY_P)) {
-                set_os_mode(OS_WIN); // Fn+P = Windows; the P is not sent
-              }
-              else if (!Fn_pressed && (normal[x][y] == KEY_O)) {
-                set_os_mode(OS_MAC); // Fn+O = Mac; the O is not sent
-              }
-              else if ((backlight_key[x][y] != 0) && (use_media || (normal[x][y] == 0))) {
-                step_backlight(backlight_key[x][y]); // handled here, nothing sent to the host
-              }
-              else if ((consumer[x][y] != 0) && (use_media || (normal[x][y] == 0))) {
-                // consumer key: sent unless Fn/Fn-lock picks the F-key, or always if there
-                // is no F-key alternative.
-                // Uses the media-key interface, so it does not need one of the 6 slots.
-                Keyboard.press(consumer[x][y]);
-                sent[x][y] = consumer[x][y];
-              }
-              else if ((shortcut[x][y] != 0) && (use_media || (normal[x][y] == 0))) {
-                // shortcut key: same default/Fn rule as consumer keys, but it needs a free
-                // slot for its key, so it retries like a normal key when the slots are full
-                if (!slots_full) {
-                  sent[x][y] = press_shortcut(shortcut[x][y]);
-                  sent_sc[x][y] = true;
-                }
-                else {
-                  accepted = false;
-                }
-              }
-              else if (!Fn_pressed && (media[x][y] != 0)) { // Fn pressed -> tap the media key
-                if (media_tap) {
-                  Keyboard.release(media_tap); // end any tap still held
-                }
-                Keyboard.press(media[x][y]); // loop() sends the release after MEDIA_TAP_US
-                media_tap = media[x][y];
-                media_tap_start = micros();
-              }
-              else if ((normal[x][y] != 0) && !slots_full) { // normal key into a free slot
-                load_slot(normal[x][y]);
-                send_normals();
-                sent[x][y] = normal[x][y];
-              }
-              else {
-                // slots full: do not commit or lock out, so this press retries on the next
-                // scan once one of the 6 slots frees up
-                accepted = false;
-              }
-              if (accepted) {
-                old_key[x][y] = reading;   // commit the press
-                lock_key(x, y);            // start the lockout window
-              }
-            }
-            else { // released - undo whatever the press sent
-              if (sent_sc[x][y]) { // a shortcut: its key (if any) and its modifiers
-                release_shortcut(sent[x][y]);
-                sent_sc[x][y] = false;
-              }
-              else if (sent[x][y] == consumer[x][y] && sent[x][y] != 0) {
-                Keyboard.release(sent[x][y]);
-              }
-              else if (sent[x][y] != 0) { // a normal key occupying a slot
-                clear_slot(sent[x][y]);
-                send_normals();
-              }
-              sent[x][y] = 0;
-              old_key[x][y] = reading;   // commit the release
-              lock_key(x, y);            // start the lockout window
-            }
-          }
-          else {
-            old_key[x][y] = reading;   // no key mapped at this cell; just track the state
-            lock_key(x, y);
-          }
-        }
-      }
-    }
+  if (!matrix_idle || any_key_down()) { // idle and nothing down: skip the full scan
+#if LATENCY_DEBUG
+    uint32_t dbg_full_start = ARM_DWT_CYCCNT;
+#endif
+    scan_matrix();
+#if LATENCY_DEBUG
+    uint32_t full_cycles = ARM_DWT_CYCCNT - dbg_full_start;
+    dbg_full_sum += full_cycles;
+    if (full_cycles > dbg_full_max) dbg_full_max = full_cycles;
+    dbg_full++;
+#endif
   }
 //
 // **********keyboard scan complete
@@ -807,12 +954,15 @@ void loop() {
   dbg_scans++;
   if (millis() - dbg_report_at >= 1000) { // report once a second, then start a new window
     float cyc_per_us = F_CPU / 1000000.0f;
-    Serial.printf("scans/s %lu | scan avg %.1f us max %.1f us | loop avg %.1f us max %.1f us\n",
+    Serial.printf("scans/s %lu | scan avg %.1f us max %.1f us | full/s %lu avg %.1f us max %.1f us | loop avg %.1f us max %.1f us | %.1f C\n",
                   dbg_scans,
                   dbg_scan_sum / (float)dbg_scans / cyc_per_us, dbg_scan_max / cyc_per_us,
-                  dbg_loop_sum / (float)dbg_loops / cyc_per_us, dbg_loop_max / cyc_per_us);
-    dbg_scan_max = dbg_loop_max = dbg_scans = dbg_loops = 0;
-    dbg_scan_sum = dbg_loop_sum = 0;
+                  dbg_full, dbg_full ? dbg_full_sum / (float)dbg_full / cyc_per_us : 0.0f,
+                  dbg_full_max / cyc_per_us,
+                  dbg_loop_sum / (float)dbg_loops / cyc_per_us, dbg_loop_max / cyc_per_us,
+                  tempmonGetTemp()); // chip temperature
+    dbg_scan_max = dbg_loop_max = dbg_scans = dbg_loops = dbg_full = dbg_full_max = 0;
+    dbg_scan_sum = dbg_loop_sum = dbg_full_sum = 0;
     dbg_loop_start = 0; // the loop that printed is not counted
     dbg_report_at = millis();
   }
@@ -821,10 +971,10 @@ void loop() {
 // Turn on the LED on the Teensy for Caps Lock based on bit 1 in the keyboard_leds variable controlled by the USB host computer
 //
   if (keyboard_leds & 1<<1) {  // mask off all bits but D1 and test if set
-    go_1(CAPS_LED); // turn on the LED
+    digitalWriteFast(CAPS_LED, HIGH); // turn on the LED
   }
   else {
-    go_0(CAPS_LED); // turn off the LED
+    digitalWriteFast(CAPS_LED, LOW); // turn off the LED
   }
   set_ind(IND_CAPS, keyboard_leds & 1<<1); // same state on the Caps Lock key LED
   set_ind(IND_COMP3, fn_lock);             // computer 3 key LED shows Fn-lock
@@ -851,7 +1001,7 @@ void loop() {
     media_tap = 0;
   }
 //
-// No delay here: the next scan starts right away. A full scan (rows_max * ROW_SETTLE_US plus
-// the reads) takes tens of microseconds at 150 MHz, well under the 125us USB poll interval at
+// No delay here: the next scan starts right away. An idle check (one ROW_SETTLE_US) or a full scan (rows_max * ROW_SETTLE_US plus
+// the reads) takes at most tens of microseconds at 150 MHz, well under the 125us USB poll interval at
 // 8000Hz, and debounce is timed per key, so scanning this fast causes no chatter.
 }

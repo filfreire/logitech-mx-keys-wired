@@ -17,7 +17,7 @@ Currently Working:
 - [x] Caps Lock LED works, both on the Teensy and on the Caps Lock key itself; 
 - [x] the top-row media and shortcut keys, Fn-lock, the Mac/Windows mode switch, work
 - [x] settings saved across reboots.
-- [x] 8000Hz USB pooling and ~72 µs keyboard scan rate
+- [x] 8000Hz USB pooling, ~4 µs idle key check and ~33 µs full keyboard scan
 
 Not done yet: 
 - [ ] working backlight (and the F5/F6 backlight decrease/increase keys)
@@ -120,6 +120,15 @@ arduino-cli compile --fqbn teensy:avr:teensy41:usb=keyboard,speed=150 firmware/M
 arduino-cli upload  -p usb:<your-teensy-port> --fqbn teensy:avr:teensy41:usb=keyboard,speed=150 firmware/MX_Keys_Controller
 ```
 
+Before the first build (and again after every Teensyduino core update), patch the core so
+the media keys are polled at 8000Hz like the rest of the keyboard, then build once with
+`--clean` so the cached core is rebuilt. The firmware prints a warning if this is missing.
+
+```bash
+uv run tools/patch_teensy_core.py
+arduino-cli compile --clean --fqbn teensy:avr:teensy41:usb=keyboard,speed=150 firmware/MX_Keys_Controller
+```
+
 `speed=150` runs the CPU at 150 MHz instead of the default 600 MHz. The firmware scans
 continuously, so at 600 MHz the chip sits warm all day; at 24 MHz a scan is slower than the
 125us USB poll and wastes the 8000Hz polling. 150 MHz keeps a full scan well under one poll.
@@ -156,10 +165,13 @@ Found with `tools/LED_Probe`, which steps through every pin pair through a weak 
 You can find the code for the firmware on [firmware/MX_Keys_Controller/MX_Keys_Controller.ino](firmware/MX_Keys_Controller/MX_Keys_Controller.ino)
 
 - Scan: drive each row (output pin) low in turn, read every column (input pin) with a pullup. Keys read low when pressed (negative logic).
-- The firmware only sends a USB report on a confirmed state change, never on a steady state.
-- The matrix is scanned back to back with no delay. At 150 MHz a scan measures ~72us on average (about 13,900 scans/s), under 80us at worst while typing and under 100us while holding chords.
+- Rows are open-drain outputs switched with one write to the GPIO port's set/clear register, and each row's 16 columns are read with one load per GPIO port (they span three), instead of a `pinMode()`/`digitalRead()` per pin.
+- The firmware only sends a USB report on a confirmed state change, never on a steady state. All changes found in one scan go out in a single report, since every report waits for its own 125us poll (shortcut keys still send their modifiers and key as two reports, in order).
+- The matrix is scanned back to back with no delay, in two modes:
+  - Idle (no key down, sent, or inside a debounce/ghost window): all rows are driven low at once and the columns read once, so one settle tells whether any key went down. This takes ~4.4us (about 194,000 checks/s), so a first press from rest is seen within a few microseconds.
+  - Otherwise, a full scan: each row is acted on and its changes sent as soon as it is read, and the next row is driven low before that work is done, so the work happens while the next row settles. A full scan measures ~33us on average and ~42us at worst while typing; ~27us of it is the `rows_max * ROW_SETTLE_US` settle time. (The original scan took ~72us.)
 - Debounce is eager and per-key: a press or release is sent the instant it is first seen, then that key is locked out for `DEBOUNCE_US` so contact bounce is ignored. Debounce adds no latency to the change itself and does not drop fast or glancing taps.
-- USB polling is 8000Hz: Teensy 4.1 runs at USB high speed (480 Mbit), and the Teensyduino keyboard endpoint asks for a poll every microframe (125us). Key-to-host latency is at most one scan plus one poll: ~0.2ms worst case, ~0.1ms on average. The media-key interface is polled at 1000Hz.
+- USB polling is 8000Hz: Teensy 4.1 runs at USB high speed (480 Mbit), and the Teensyduino keyboard endpoint asks for a poll every microframe (125us). Key-to-host latency is the wait for the key to be read (one idle check from rest, up to one full scan while other keys are held) plus the wait for the next poll (~62us on average). With `tools/patch_teensy_core.py` applied, the media-key interface is polled at 8000Hz too (the stock core polls it at 1000Hz).
 - Anti-ghosting: the matrix has no diodes, so with three keys down at the corners of a rectangle the fourth corner reads pressed too (J+K+; also shows "."). The whole matrix is read before any change is acted on, and a press that closes such a rectangle is held back until the rectangle breaks. A press that might be a ghost (two of the other three corners down, the third maybe bouncing) waits 1ms first; ordinary typing and rolls are not delayed.
 - Rollover: 6KRO (the USB boot-protocol 6-key method) plus modifiers.
 - USB names: `usb_names.c` makes the board show up as "MX Keys" by "MX Keys Wired" instead of "Keyboard" by "Teensyduino". The vendor/product IDs stay the Teensy ones, so uploads still reboot the board by themselves.
@@ -173,7 +185,8 @@ Tuning knobs in the sketch:
 - `#define GHOST_HOLD_US 2000` / `GHOST_CONFIRM_US 1000` - anti-ghosting windows. Raise them if
   a phantom key still slips through when holding several keys.
 - `#define LATENCY_DEBUG 0` - set to 1 to measure the scan. Once a second the firmware prints
-  scans per second plus the average and worst scan time and time between scans. Read it with
+  checks per second with their average and worst time, how many of them were full scans (and
+  their average and worst time), and the time between scans. Read it with
   `uv run tools/latency_monitor.py` (reads the Teensy serial emulation channel). Set it
   back to 0 afterwards.
 
