@@ -1,6 +1,6 @@
 # logitech-mx-keys-wired
 
-Make the Logitech MX Keys work via wired connection, 8000Hz USB pooling rate, sub-millisecond latency (~0.07 ms average, see [Latency compared](#latency-compared))
+Make the Logitech MX Keys work via wired connection, 8000 Hz USB polling rate, sub-millisecond controller latency (~0.07 ms average from key contact to USB report, see [Latency compared](#latency-compared))
 
 ![picture of the logitech mx keys connected to teensy 4.1 with an FPC adapter](images/mxkeys_and_teensy1.png)
 
@@ -20,11 +20,21 @@ Make the Logitech MX Keys work via wired connection, 8000Hz USB pooling rate, su
 | MX Keys S | Bluetooth | 16.1 ms [*](https://www.rtings.com/keyboard/tools/compare/logitech-mx-keys-mini-logitech-mx-keys-s/28677/40576) |
 | MX Mechanical | Logi Bolt receiver | 12.4 ms [*](https://www.rtings.com/keyboard/tools/compare/logitech-mx-keys-logitech-mx-mechanical/1687/33681) |
 | MX Mechanical | Bluetooth | 16.4 ms [*](https://www.rtings.com/keyboard/tools/compare/logitech-mx-keys-logitech-mx-mechanical/1687/33681) |
-| **MX Keys + this mod** | **USB wired, 8000 Hz** | **~0.07 ms average, ≤ 0.17 ms worst** |
+| **MX Keys + this mod** | **USB wired, 8000 Hz** | **~0.07 ms average, ≤ 0.17 ms worst** (key contact to USB report, ordinary keypress) |
 
 ![Bar chart of single-key latency: stock MX keyboards between 12.4 and 26.8 ms, MX Keys with this mod about 0.07 ms](images/latency_comparison.svg)
 
-> Side-note: Stock values are RTINGS end-to-end measurements. My mod's values are firmware-side estimates ([details](#firmware-design-and-tuning)) that leave out the computer's own USB and OS processing, and releases are as fast as presses. So the fair summary is **sub-millisecond, against 12–27 ms**. The "buffering" feel some people report on the stock MX Keys fits RTINGS' data: it sends key updates only every ~8 ms (125 Hz effective) and takes 43.1 ms to report a release [*](https://www.rtings.com/keyboard/reviews/logitech/mx-keys), so fast typing reaches the computer in clumps, and the wireless link probably adds a delay when it wakes from idle. My mod never sleeps and sends each change the moment it's seen.
+> Side-note: these numbers are not measured the same way. Stock values are RTINGS end-to-end measurements, which include the switch's own travel before it registers and the computer's USB and OS processing. My mod's values are firmware self-timing ([details](#firmware-design-and-tuning)) from the moment the switch contact closes until the report is handed to USB: one idle check (~4.4 µs) or one full scan (~33 µs, ~42 µs worst) plus the wait for the next 125 µs USB poll (~62 µs average). The worst case is for an ordinary keypress: a press that could be a ghost key waits up to 1 ms more, and shortcut keys (e.g. Win+L) send two reports, one poll apart. Releases are as fast as presses. The mod only replaces what happens inside the keyboard, so an external measurement on RTINGS' terms would land well above 0.07 ms, with most of it being the switch and the host. I haven't measured that yet; contributions welcome. The fair summary is **the keyboard's own part drops from most of the 12–27 ms to under 0.2 ms**.
+>
+> The "buffering" feel some people report on the stock MX Keys fits RTINGS' data: it sends key updates only every ~8 ms (125 Hz effective) and takes 43.1 ms to report a release [*](https://www.rtings.com/keyboard/reviews/logitech/mx-keys), so fast typing reaches the computer in clumps, and the wireless link probably adds a delay when it wakes from idle. My mod never sleeps and sends each change the moment it's seen.
+
+## Why the stock MX Keys can't work wired
+
+The MX Keys has a USB-C port, but it only charges the battery. The main board is built around a Nordic [nRF52832](https://docs.nordicsemi.com/r/bundle/ps_nrf52832/page/nrf52832_ps.html), a Bluetooth/2.4 GHz SoC with no USB peripheral at all, so no firmware update can ever make it a wired keyboard: the chip has no way to talk USB.
+
+Nordic's nRF52840 does the same radio work and adds USB. On Digikey the difference is about 2 to 3 euros per chip ([nRF52832](https://www.digikey.pt/en/products/detail/nordic-semiconductor-asa/NRF52832-QFAB-G-R/15998604) vs [nRF52840](https://www.digikey.pt/en/products/detail/nordic-semiconductor-asa/NRF52840-QFAA-F-R7/15929801)). My guess is that it came down to cost and margin, but that's only my suspicion.
+
+This mod sidesteps the chip entirely. The key matrix reaches the main board through a 30-pin, 1.0 mm pitch flex cable, so a Teensy 4.1 on an FPC adapter can read the keys directly and act as a USB keyboard in place of the original board (the same approach as Frank Adams' laptop keyboard controller). Two other leads come off the main board: a red/black pair for the backlight (a ~27 V LED string, see [Backlight](#backlight-in-progress)) and a single wire that is most likely the hand-proximity sensor.
 
 ## Status
 
@@ -34,7 +44,7 @@ Currently Working:
 - [x] Caps Lock LED works, both on the Teensy and on the Caps Lock key itself; 
 - [x] the top-row media and shortcut keys, Fn-lock, the Mac/Windows mode switch, work
 - [x] settings saved across reboots.
-- [x] 8000Hz USB pooling, ~4 µs idle key check and ~33 µs full keyboard scan
+- [x] 8000Hz USB polling, ~4 µs idle key check and ~33 µs full keyboard scan
 
 Not done yet: 
 - [ ] working backlight (and the F5/F6 backlight decrease/increase keys)

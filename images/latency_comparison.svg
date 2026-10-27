@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="760" height="430" viewBox="0 0 760 430" role="img" aria-labelledby="t d">
 <title id="t">Single-key latency: stock Logitech keyboards vs MX Keys with this mod</title>
-<desc id="d">MX Keys, Unifying receiver: 26.8 ms; MX Keys, Bluetooth: 21.7 ms (±7.9); MX Mechanical, Bluetooth: 16.4 ms; MX Keys Mini, Bluetooth: 16.2 ms; MX Keys S, Bluetooth: 16.1 ms; MX Keys S, Logi Bolt receiver: 12.8 ms; MX Mechanical, Logi Bolt receiver: 12.4 ms; MX Keys + this mod, USB wired, 8000 Hz: ~0.07 ms.</desc>
+<desc id="d">MX Keys, Unifying receiver: 26.8 ms; MX Keys, Bluetooth: 21.7 ms (±7.9); MX Mechanical, Bluetooth: 16.4 ms; MX Keys Mini, Bluetooth: 16.2 ms; MX Keys S, Bluetooth: 16.1 ms; MX Keys S, Logi Bolt receiver: 12.8 ms; MX Mechanical, Logi Bolt receiver: 12.4 ms; MX Keys + this mod, USB wired, 8000 Hz: ~0.07 ms, timed by the firmware from key contact to USB report (excludes switch travel and host processing).</desc>
 <style>
   .surface { fill: #fcfcfb; }
   .ink { fill: #0b0b0b; } .ink2 { fill: #52514e; } .muted { fill: #898781; }
@@ -17,7 +17,7 @@
 </style>
 <rect class="surface" width="760" height="430" rx="8"/>
 <text class="ink" x="20" y="32" font-size="17" font-weight="600">Single-key latency (lower is better)</text>
-<text class="ink2" x="20" y="54" font-size="13">Stock keyboards: RTINGS, measured end to end. Mod: firmware-side estimate.</text>
+<text class="ink2" x="20" y="54" font-size="13">Stock keyboards: RTINGS, measured end to end. Mod: firmware-timed, key contact to USB report.</text>
 <line class="base" x1="274" y1="72" x2="274" y2="366"/>
 <text class="muted tick" x="274" y="384" font-size="12" text-anchor="middle">0 ms</text>
 <line class="grid" x1="407.3333333333333" y1="72" x2="407.3333333333333" y2="366"/>
@@ -58,5 +58,5 @@
 <text class="ink2" x="262" y="361" font-size="11" text-anchor="end">USB wired, 8000 Hz</text>
 <path class="mod" d="M274,338h1a1,1 0 0 1 1,1v18a1,1 0 0 1 -1,1h-1z"/>
 <text class="ink" x="284" y="352" font-size="13" font-weight="600">~0.07 ms</text>
-<text class="muted" x="20" y="414" font-size="11">Mod value leaves out the host's USB and OS processing, which RTINGS' figures include. Worst case ≤ 0.17 ms.</text>
+<text class="muted" x="20" y="414" font-size="11">Not like for like: the mod value leaves out switch travel and the host's USB/OS processing. Keypress worst case ≤ 0.17 ms.</text>
 </svg>
