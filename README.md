@@ -1,6 +1,6 @@
 # logitech-mx-keys-wired
 
-Make the Logitech MX Keys work via wired connection, 8000Hz USB pooling rate, ~0.1 ms latency
+Make the Logitech MX Keys work via wired connection, 8000Hz USB pooling rate, sub-millisecond latency (~0.07 ms average, see [Latency compared](#latency-compared))
 
 ![picture of the logitech mx keys connected to teensy 4.1 with an FPC adapter](images/mxkeys_and_teensy1.png)
 
@@ -8,6 +8,25 @@ Make the Logitech MX Keys work via wired connection, 8000Hz USB pooling rate, ~0
 > This project is built on top of [Frank Adams' USB Laptop Keyboard Controller](https://github.com/thedalles77/USB_Laptop_Keyboard_Controller) and [Marcel Hillesheim's matrix generator](https://github.com/thedalles77/USB_Laptop_Keyboard_Controller-1/blob/master/matrixgenerator.py).
 
 > :warning: Please note this is an independent hobby project and is not affiliated with, endorsed by, or sponsored by Logitech.
+
+## Latency compared
+
+| Keyboard | Connection | Single-key latency |
+|---|---|---|
+| MX Keys | Unifying receiver | 26.8 ms [*](https://www.rtings.com/keyboard/tools/compare/microsoft-bluetooth-keyboard-vs-logitech-mx-keys/1823/1687) |
+| MX Keys | Bluetooth | 21.7 ms, ±7.9 ms [*](https://www.rtings.com/keyboard/tools/compare/logitech-mx-keys-logitech-mx-mechanical/1687/33681) |
+| MX Keys Mini | Bluetooth | 16.2 ms [*](https://www.rtings.com/keyboard/tools/compare/logitech-mx-keys-mini-logitech-mx-mechanical/28677/33681) |
+| MX Keys S | Logi Bolt receiver | 12.8 ms [*](https://www.rtings.com/keyboard/tools/compare/logitech-mx-keys-mini-logitech-mx-keys-s/28677/40576) |
+| MX Keys S | Bluetooth | 16.1 ms [*](https://www.rtings.com/keyboard/tools/compare/logitech-mx-keys-mini-logitech-mx-keys-s/28677/40576) |
+| MX Mechanical | Logi Bolt receiver | 12.4 ms [*](https://www.rtings.com/keyboard/tools/compare/logitech-mx-keys-logitech-mx-mechanical/1687/33681) |
+| MX Mechanical | Bluetooth | 16.4 ms [*](https://www.rtings.com/keyboard/tools/compare/logitech-mx-keys-logitech-mx-mechanical/1687/33681) |
+| **MX Keys + this mod** | **USB wired, 8000 Hz** | **~0.07 ms average, ≤ 0.17 ms worst** |
+
+![Bar chart of single-key latency: stock MX keyboards between 12.4 and 26.8 ms, MX Keys with this mod about 0.07 ms](images/latency_comparison.svg)
+
+The stock keyboard values are RTINGS measurements, made end to end: a key is pressed and timed until the computer registers it. The stock MX Keys is also slow to report releases: 43.1 ms, against 22.7 ms for presses, in RTINGS' multi-key test [*](https://www.rtings.com/keyboard/reviews/logitech/mx-keys).
+
+Side-note: The mod's values are firmware-side estimates from the measured scan timing (see [Firmware design and tuning](#firmware-design-and-tuning)): the time to read the key, plus the wait for the next 125 µs USB poll. Releases are reported just as fast as presses. These don't include the time the computer's USB controller and OS take to process the report, which RTINGS' numbers do, so the fair summary is **sub-millisecond, against 12–27 ms for the stock keyboards**.
 
 ## Status
 

@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="430" viewBox="0 0 760 430" role="img" aria-labelledby="t d">
+<title id="t">Single-key latency: stock Logitech keyboards vs MX Keys with this mod</title>
+<desc id="d">MX Keys, Unifying receiver: 26.8 ms; MX Keys, Bluetooth: 21.7 ms (±7.9); MX Mechanical, Bluetooth: 16.4 ms; MX Keys Mini, Bluetooth: 16.2 ms; MX Keys S, Bluetooth: 16.1 ms; MX Keys S, Logi Bolt receiver: 12.8 ms; MX Mechanical, Logi Bolt receiver: 12.4 ms; MX Keys + this mod, USB wired, 8000 Hz: ~0.07 ms.</desc>
+<style>
+  .surface { fill: #fcfcfb; }
+  .ink { fill: #0b0b0b; } .ink2 { fill: #52514e; } .muted { fill: #898781; }
+  .grid { stroke: #e1e0d9; stroke-width: 1; } .base { stroke: #c3c2b7; stroke-width: 1; }
+  .stock { fill: #898781; } .mod { fill: #2a78d6; }
+  text { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .tick { font-variant-numeric: tabular-nums; }
+  @media (prefers-color-scheme: dark) {
+    .surface { fill: #1a1a19; }
+    .ink { fill: #f0efec; } .ink2 { fill: #c3c2b7; }
+    .grid { stroke: #2c2c2a; } .base { stroke: #383835; }
+    .mod { fill: #3987e5; }
+  }
+</style>
+<rect class="surface" width="760" height="430" rx="8"/>
+<text class="ink" x="20" y="32" font-size="17" font-weight="600">Single-key latency (lower is better)</text>
+<text class="ink2" x="20" y="54" font-size="13">Stock keyboards: RTINGS, measured end to end. Mod: firmware-side estimate.</text>
+<line class="base" x1="274" y1="72" x2="274" y2="366"/>
+<text class="muted tick" x="274" y="384" font-size="12" text-anchor="middle">0 ms</text>
+<line class="grid" x1="407.3333333333333" y1="72" x2="407.3333333333333" y2="366"/>
+<text class="muted tick" x="407.3333333333333" y="384" font-size="12" text-anchor="middle">10 ms</text>
+<line class="grid" x1="540.6666666666666" y1="72" x2="540.6666666666666" y2="366"/>
+<text class="muted tick" x="540.6666666666666" y="384" font-size="12" text-anchor="middle">20 ms</text>
+<line class="grid" x1="674" y1="72" x2="674" y2="366"/>
+<text class="muted tick" x="674" y="384" font-size="12" text-anchor="middle">30 ms</text>
+<text class="ink" x="262" y="94" font-size="13" text-anchor="end">MX Keys</text>
+<text class="ink2" x="262" y="109" font-size="11" text-anchor="end">Unifying receiver</text>
+<path class="stock" d="M274,86h353.33333333333326a4,4 0 0 1 4,4v12a4,4 0 0 1 -4,4h-353.33333333333326z"/>
+<text class="ink2" x="639.3333333333333" y="100" font-size="13">26.8 ms</text>
+<text class="ink" x="262" y="130" font-size="13" text-anchor="end">MX Keys</text>
+<text class="ink2" x="262" y="145" font-size="11" text-anchor="end">Bluetooth</text>
+<path class="stock" d="M274,122h285.33333333333326a4,4 0 0 1 4,4v12a4,4 0 0 1 -4,4h-285.33333333333326z"/>
+<text class="ink2" x="571.3333333333333" y="136" font-size="13">21.7 ms (±7.9)</text>
+<text class="ink" x="262" y="166" font-size="13" text-anchor="end">MX Mechanical</text>
+<text class="ink2" x="262" y="181" font-size="11" text-anchor="end">Bluetooth</text>
+<path class="stock" d="M274,158h214.66666666666663a4,4 0 0 1 4,4v12a4,4 0 0 1 -4,4h-214.66666666666663z"/>
+<text class="ink2" x="500.66666666666663" y="172" font-size="13">16.4 ms</text>
+<text class="ink" x="262" y="202" font-size="13" text-anchor="end">MX Keys Mini</text>
+<text class="ink2" x="262" y="217" font-size="11" text-anchor="end">Bluetooth</text>
+<path class="stock" d="M274,194h212a4,4 0 0 1 4,4v12a4,4 0 0 1 -4,4h-212z"/>
+<text class="ink2" x="498" y="208" font-size="13">16.2 ms</text>
+<text class="ink" x="262" y="238" font-size="13" text-anchor="end">MX Keys S</text>
+<text class="ink2" x="262" y="253" font-size="11" text-anchor="end">Bluetooth</text>
+<path class="stock" d="M274,230h210.66666666666669a4,4 0 0 1 4,4v12a4,4 0 0 1 -4,4h-210.66666666666669z"/>
+<text class="ink2" x="496.6666666666667" y="244" font-size="13">16.1 ms</text>
+<text class="ink" x="262" y="274" font-size="13" text-anchor="end">MX Keys S</text>
+<text class="ink2" x="262" y="289" font-size="11" text-anchor="end">Logi Bolt receiver</text>
+<path class="stock" d="M274,266h166.66666666666669a4,4 0 0 1 4,4v12a4,4 0 0 1 -4,4h-166.66666666666669z"/>
+<text class="ink2" x="452.6666666666667" y="280" font-size="13">12.8 ms</text>
+<text class="ink" x="262" y="310" font-size="13" text-anchor="end">MX Mechanical</text>
+<text class="ink2" x="262" y="325" font-size="11" text-anchor="end">Logi Bolt receiver</text>
+<path class="stock" d="M274,302h161.33333333333337a4,4 0 0 1 4,4v12a4,4 0 0 1 -4,4h-161.33333333333337z"/>
+<text class="ink2" x="447.33333333333337" y="316" font-size="13">12.4 ms</text>
+<text class="ink" x="262" y="346" font-size="13" text-anchor="end" font-weight="600">MX Keys + this mod</text>
+<text class="ink2" x="262" y="361" font-size="11" text-anchor="end">USB wired, 8000 Hz</text>
+<path class="mod" d="M274,338h1a1,1 0 0 1 1,1v18a1,1 0 0 1 -1,1h-1z"/>
+<text class="ink" x="284" y="352" font-size="13" font-weight="600">~0.07 ms</text>
+<text class="muted" x="20" y="414" font-size="11">Mod value leaves out the host's USB and OS processing, which RTINGS' figures include. Worst case ≤ 0.17 ms.</text>
+</svg>
