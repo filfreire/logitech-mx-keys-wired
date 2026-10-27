@@ -1,6 +1,6 @@
 # logitech-mx-keys-wired
 
-Make the Logitech MX Keys work via wired connection, 8000 MHz USB pooling rate, ~0.1 ms latency
+Make the Logitech MX Keys work via wired connection, 8000Hz USB pooling rate, ~0.1 ms latency
 
 ![picture of the logitech mx keys connected to teensy 4.1 with an FPC adapter](images/mxkeys_and_teensy1.png)
 
@@ -20,13 +20,13 @@ Currently Working:
 - [x] 8000Hz USB pooling and ~72 µs keyboard scan rate
 
 Not done yet: 
-- [] working backlight (and the F5/F6 backlight decrease/increase keys)
-- [] proximity sensor (which triggers backlight on when hands get close)
-- [] light sensor?
-- [] convert the prototype into a PCB with soldered components that can fit into the old PCB's place
-- [] MX Keys mini support?
-- [] MX Keys S support?
-- [] maybe? create a followup version that brings back bluetooth (besides wired-support)
+- [ ] working backlight (and the F5/F6 backlight decrease/increase keys)
+- [ ] proximity sensor (which triggers backlight on when hands get close)
+- [ ] light sensor?
+- [ ] convert the prototype into a PCB with soldered components that can fit into the old PCB's place
+- [ ] MX Keys mini support?
+- [ ] MX Keys S support?
+- [ ] ?maybe? create a followup version that brings back bluetooth (besides wired-support)
 
 ## Hardware Requirements
 
